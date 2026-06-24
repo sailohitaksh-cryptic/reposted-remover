@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reposted Remover</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+        </svg>
+      </div>
+      <h1>Reposted Remover</h1>
+    </header>
+
+    <div class="stat-row">
+      <span class="stat-label">Hidden this page</span>
+      <span class="stat-value" id="count">0</span>
+    </div>
+
+    <div class="toggle-row">
+      <span class="toggle-label">Hide reposted jobs</span>
+      <label class="switch">
+        <input type="checkbox" id="toggle" checked />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <p class="hint">
+      Works on LinkedIn job search pages. Detects listings marked <em>"Reposted X days ago"</em> and hides them automatically.
+    </p>
+
+    <div class="mode-row" id="mode-row">
+      <span class="mode-badge hidden" id="mode-hide">Hiding</span>
+      <span class="mode-badge visible" id="mode-badge">Badging</span>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
