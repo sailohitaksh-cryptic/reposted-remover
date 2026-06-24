@@ -8,22 +8,22 @@ function updateModeUI(hide) {
   modeBadge.classList.toggle('active', !hide);
 }
 
-// Load saved preference
+// Restore saved preference
 chrome.storage.sync.get({ hideReposted: true }, ({ hideReposted }) => {
   toggle.checked = hideReposted;
   updateModeUI(hideReposted);
 });
 
-// Query the active tab for the current hidden count
+// Fetch current hidden count from the active tab's content script
 chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
   if (!tab) return;
   chrome.tabs.sendMessage(tab.id, { type: 'RRB_GET_COUNT' }, (resp) => {
-    if (chrome.runtime.lastError) return; // content script not on this page
+    if (chrome.runtime.lastError) return;
     if (resp && resp.count != null) countEl.textContent = resp.count;
   });
 });
 
-// Handle toggle change
+// Toggle handler
 toggle.addEventListener('change', () => {
   const hide = toggle.checked;
   chrome.storage.sync.set({ hideReposted: hide });

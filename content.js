@@ -1,45 +1,34 @@
-// Selectors for LinkedIn job cards and the repost label
-const JOB_CARD_SELECTOR = 'li.jobs-search-results__list-item, li.job-card-container, li[data-occludable-job-id]';
-const REPOST_PATTERN = /reposted/i;
+'use strict';
 
+const REPOST_RE = /reposted/i;
 let hideEnabled = true;
 let hiddenCount = 0;
+let debounceTimer = null;
+
+// Multiple selectors to cover LinkedIn's various layouts and A/B tests.
+// The outer <li> is the most stable anchor.
+const CARD_SEL =
+  'li.jobs-search-results__list-item, ' +
+  'li[data-occludable-job-id], ' +
+  'div.job-card-container, ' +
+  'li[class*="jobs-search-results"]';
+
+// ── Detection ─────────────────────────────────────────────────────────────────
+// Uses textContent (not innerText) so hidden/aria elements are included.
+// LinkedIn renders "Reposted X ago" in aria-labels on the job title link
+// even when the visible card text shows "Viewed · Promoted".
 
 function isReposted(card) {
-  // LinkedIn surfaces the repost label in several places depending on layout
-  const text = card.innerText || '';
-  if (REPOST_PATTERN.test(text)) return true;
-
-  // Also check aria-labels and data attributes
-  const labels = card.querySelectorAll('[aria-label]');
-  for (const el of labels) {
-    if (REPOST_PATTERN.test(el.getAttribute('aria-label'))) return true;
+  if (REPOST_RE.test(card.textContent)) return true;
+  for (const el of card.querySelectorAll('[aria-label]')) {
+    if (REPOST_RE.test(el.getAttribute('aria-label'))) return true;
   }
   return false;
 }
 
-function applyToCard(card) {
-  if (card.dataset.repostedProcessed) return;
-  card.dataset.repostedProcessed = '1';
+// ── Apply ─────────────────────────────────────────────────────────────────────
 
-  if (!isReposted(card)) return;
-
-  card.dataset.reposted = '1';
-
-  if (hideEnabled) {
-    hideCard(card);
-  } else {
-    badgeCard(card);
-  }
-}
-
-function hideCard(card) {
-  card.style.display = 'none';
-  hiddenCount++;
-  updateBadge();
-}
-
-function badgeCard(card) {
+function addBadge(card) {
   if (card.querySelector('.rrb-badge')) return;
   const badge = document.createElement('span');
   badge.className = 'rrb-badge';
@@ -48,61 +37,121 @@ function badgeCard(card) {
   card.prepend(badge);
 }
 
-function updateBadge() {
+function applyCard(card) {
+  if (card.dataset.rrbReposted) return;
+  card.dataset.rrbReposted = '1';
+  if (hideEnabled) {
+    card.style.display = 'none';
+    hiddenCount++;
+  } else {
+    addBadge(card);
+  }
+}
+
+// ── Scan ──────────────────────────────────────────────────────────────────────
+
+function processAll() {
+  // Pass 1: walk known card containers
+  document.querySelectorAll(CARD_SEL).forEach(card => {
+    if (!card.dataset.rrbReposted && isReposted(card)) applyCard(card);
+  });
+
+  // Pass 2: find aria-label="... Reposted ..." anywhere on the page,
+  // then walk up to the nearest list-item ancestor.
+  // This catches cards where visible text says "Viewed" but aria-label
+  // still contains the original "Reposted X ago" string.
+  document.querySelectorAll('[aria-label]').forEach(el => {
+    if (!REPOST_RE.test(el.getAttribute('aria-label'))) return;
+    const card = el.closest('li, article, [data-job-id], [data-occludable-job-id], div.job-card-container');
+    if (card && !card.dataset.rrbReposted) applyCard(card);
+  });
+
+  broadcastCount();
+}
+
+function broadcastCount() {
   window.postMessage({ type: 'RRB_COUNT', count: hiddenCount }, '*');
 }
 
-function processAll() {
-  const cards = document.querySelectorAll(JOB_CARD_SELECTOR);
-  cards.forEach(applyToCard);
+// ── Detail panel ──────────────────────────────────────────────────────────────
+// When a user clicks a job, LinkedIn loads a detail panel on the right.
+// If it says "Reposted", find the active/selected card in the list and mark it.
+
+let lastDetailSnippet = '';
+
+function checkDetailPanel() {
+  const panel = document.querySelector(
+    '.jobs-unified-top-card, ' +
+    '.jobs-search__job-details--wrapper, ' +
+    '.job-view-layout'
+  );
+  if (!panel) return;
+
+  const snippet = panel.textContent.slice(0, 500);
+  if (snippet === lastDetailSnippet) return;
+  lastDetailSnippet = snippet;
+
+  if (!REPOST_RE.test(snippet)) return;
+
+  // LinkedIn marks the selected card with --active or aria-selected
+  const active =
+    document.querySelector('.job-card-container--active') ||
+    document.querySelector('[aria-selected="true"]') ||
+    null;
+
+  if (active && !active.dataset.rrbReposted) {
+    applyCard(active);
+    broadcastCount();
+  }
 }
 
-function applyHideState(enabled) {
-  hideEnabled = enabled;
+// ── Toggle ────────────────────────────────────────────────────────────────────
+
+function applyToggle(hide) {
+  hideEnabled = hide;
   hiddenCount = 0;
-
-  document.querySelectorAll('[data-reposted="1"]').forEach(card => {
-    // Remove badge if present
-    const badge = card.querySelector('.rrb-badge');
-    if (badge) badge.remove();
-
-    if (hideEnabled) {
+  document.querySelectorAll('[data-rrb-reposted]').forEach(card => {
+    card.querySelector('.rrb-badge')?.remove();
+    if (hide) {
       card.style.display = 'none';
       hiddenCount++;
     } else {
       card.style.display = '';
-      badgeCard(card);
+      addBadge(card);
     }
   });
-
-  // Reset processed flag so new cards run through applyToCard fresh
-  document.querySelectorAll('[data-reposted-processed="1"]:not([data-reposted="1"])').forEach(card => {
-    delete card.dataset.repostedProcessed;
-  });
-
-  updateBadge();
+  broadcastCount();
 }
 
-// Load initial setting from storage via background-less messaging
+// ── Messages ──────────────────────────────────────────────────────────────────
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'RRB_TOGGLE') {
+    applyToggle(msg.hide);
+    sendResponse({ count: hiddenCount });
+    return false;
+  }
+  if (msg.type === 'RRB_GET_COUNT') {
+    sendResponse({ count: hiddenCount });
+    return false;
+  }
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
 chrome.storage.sync.get({ hideReposted: true }, ({ hideReposted }) => {
   hideEnabled = hideReposted;
   processAll();
+  checkDetailPanel();
 });
 
-// Listen for toggle messages from the popup
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === 'RRB_TOGGLE') {
-    hideEnabled = msg.hide;
-    applyHideState(hideEnabled);
-  }
-  if (msg.type === 'RRB_GET_COUNT') {
-    return Promise.resolve({ count: hiddenCount });
-  }
-});
-
-// MutationObserver to catch dynamically loaded job cards (infinite scroll / pagination)
+// Debounced observer handles infinite scroll and lazy-loaded card content.
 const observer = new MutationObserver(() => {
-  processAll();
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    processAll();
+    checkDetailPanel();
+  }, 150);
 });
 
 observer.observe(document.body, { childList: true, subtree: true });
